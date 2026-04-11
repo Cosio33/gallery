@@ -1,7 +1,7 @@
 
-```markdown
+---
 # Modificaciones a IntentHandler.kt: Operaciones con archivos en sandbox
-
+---
 ## Resumen
 
 Se ha extendido el `IntentHandler` original de la app AI Edge Gallery para soportar operaciones básicas de gestión de archivos dentro de una **carpeta sandbox** segura (`/data/data/.../files/sandbox/`). Las nuevas acciones permiten:
