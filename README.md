@@ -163,6 +163,5 @@ Dentro de la app, invoca una skill que use read_file y deberías ver un Toast co
 ---
 
 Fecha de modificación: 2026-04-11
-Autor: Basado en los requerimientos del usuario.
-
+Autor: Cosio33
 ```
