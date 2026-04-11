@@ -1,87 +1,168 @@
-# Google AI Edge Gallery ✨
 
-[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
-[![GitHub release (latest by date)](https://img.shields.io/github/v/release/google-ai-edge/gallery)](https://github.com/google-ai-edge/gallery/releases)
+```markdown
+# Modificaciones a IntentHandler.kt: Operaciones con archivos en sandbox
 
-**Explore, Experience, and Evaluate the Future of On-Device Generative AI with Google AI Edge.**
+## Resumen
 
-AI Edge Gallery is the premier destination for running the world's most powerful open-source Large Language Models (LLMs) on your mobile device. Experience high-performance Generative AI directly on your hardware—fully offline, private, and lightning-fast.
+Se ha extendido el `IntentHandler` original de la app AI Edge Gallery para soportar operaciones básicas de gestión de archivos dentro de una **carpeta sandbox** segura (`/data/data/.../files/sandbox/`). Las nuevas acciones permiten:
 
-**Now Featuring: Gemma 4**
+- `write_file` – Crear o sobrescribir un archivo de texto.
+- `delete_file` – Eliminar un archivo.
+- `create_directory` – Crear una o más carpetas.
+- `list_files` – Listar archivos (solo para depuración, **no devuelve datos al LLM**).
+- `read_file` – Leer contenido (solo previsualización en Toast, **no devuelve datos al LLM**).
 
-The latest version brings official support for the newly released Gemma 4 family. As the centerpiece of this release, Gemma 4 allows you to test the cutting edge of on-device AI. Experience advanced reasoning, logic, and creative capabilities without ever sending your data to a server.
+> **⚠️ Importante**: Las acciones `list_files` y `read_file` **no pueden devolver el resultado al LLM** a través de `run_intent` debido a limitaciones del diseño actual (los intents solo retornan un booleano de éxito/fracaso). Para obtener listados o contenidos completos y procesarlos con el LLM, se debe utilizar una **JS skill con webview** y el puente `AndroidFileSystem` (descrito al final).
 
+## Cambios realizados en IntentHandler.kt
 
-| **Install the app today from Google Play** | **Install the app today from App Store** |
-| :--- | :--- |
-| <a href='https://play.google.com/store/apps/details?id=com.google.ai.edge.gallery'><img alt='Get it on Google Play' height="120" src='https://play.google.com/intl/en_us/badges/static/images/badges/en_badge_web_generic.png'/></a> | <a href="https://apps.apple.com/us/app/google-ai-edge-gallery/id6749645337?itscg=30200&itsct=apps_box_badge&mttnsubad=6749645337" style="display: inline-block;"> <img src="https://toolbox.marketingtools.apple.com/api/v2/badges/download-on-the-app-store/black/en-us?releaseDate=1771977600" alt="Download on the App Store" style="width: 246px; height: 90px; vertical-align: middle; object-fit: contain;" /></a> |
+### 1. Nuevo data class
 
-For users without Google Play access, install the apk from the [**latest release**](https://github.com/google-ai-edge/gallery/releases/latest/)
+```kotlin
+@JsonClass(generateAdapter = true)
+data class FileOperationParams(
+    val path: String,              // ruta relativa dentro de sandbox/
+    val content: String = "",      // usado en write_file
+    val encoding: String = "utf-8" // reservado
+)
+```
 
+2. Funciones auxiliares de seguridad
 
-## App Preview
+```kotlin
+private fun getSandboxRoot(context: Context): File { ... }
+private fun resolvePath(context: Context, relativePath: String): File? { ... }
+```
 
-<img width="480" alt="01" src="https://github.com/user-attachments/assets/a809ad78-aef4-4169-91ee-de7213cbb3bd" />
-<img width="480" alt="02" src="https://github.com/user-attachments/assets/1effd10d-f45a-4f7b-9435-f50f1bdd36b6" />
-<img width="480" alt="03" src="https://github.com/user-attachments/assets/e5089e41-2c18-4fbe-9011-ebe9e5a02044" />
-<img width="480" alt="04" src="https://github.com/user-attachments/assets/0f39d3ed-7403-4606-a7c6-b2c7e51ba6c1" />
-<img width="480" alt="05" src="https://github.com/user-attachments/assets/8c229e96-b598-4735-9f60-e96907e1d5d5" />
-<img width="480" alt="06" src="https://github.com/user-attachments/assets/ac9fb77b-81de-4197-9ed3-f6fe58290b3e" />
-<img width="480" alt="07" src="https://github.com/user-attachments/assets/bc86ba07-2eaf-49b1-980f-8a87a85c596f" />
-<img width="480" alt="08" src="https://github.com/user-attachments/assets/061564ed-030f-4630-810b-13a7863fce4c" />
+· resolvePath previene directory traversal (por ejemplo, ../../../etc/passwd). Solo permite rutas que permanezcan dentro de sandbox/.
 
-## ✨ Core Features
+3. Nuevos bloques en handleAction
 
-* **Agent Skills**: Transform your LLM from a conversationalist into a proactive assistant. Use the Agent Skills tile to augment model capabilities with tools like Wikipedia for fact-grounding, interactive maps, and rich visual summary cards. You can even load modular skills from a URL or browse community contributions on GitHub Discussions.
+write_file
 
-* **AI Chat with Thinking Mode**: Engage in fluid, multi-turn conversations and toggle the new Thinking Mode to peek "under the hood." This feature allows you to see the model’s step-by-step reasoning process, which is perfect for understanding complex problem-solving. Note: Thinking Mode currently works with supported models, starting with the Gemma 4 family.
+· Parámetros: path (ruta relativa), content (texto a escribir), encoding (opcional).
+· Comportamiento: Crea los directorios padres si no existen, escribe el contenido (sobrescribe si ya existe).
+· Retorno: true si éxito, false en caso contrario. Muestra un Toast de confirmación.
 
-* **Ask Image**: Use multimodal power to identify objects, solve visual puzzles, or get detailed descriptions using your device’s camera or photo gallery.
+delete_file
 
-* **Audio Scribe**: Transcribe and translate voice recordings into text in real-time using high-efficiency on-device language models.
+· Parámetros: path.
+· Comportamiento: Elimina el archivo si existe y está dentro de la sandbox.
+· Retorno: true si se eliminó correctamente.
 
-* **Prompt Lab**: A dedicated workspace to test different prompts and single-turn use cases with granular control over model parameters like temperature and top-k.
+create_directory
 
-* **Mobile Actions**: Unlock offline device controls and automated tasks powered entirely by a finetune of FuntionGemma 270m.
+· Parámetros: path.
+· Comportamiento: Crea el directorio y todos los padres necesarios (mkdirs).
+· Retorno: true si se creó o ya existía.
 
-* **Tiny Garden**: A fun, experimental mini-game that uses natural language to plant and harvest a virtual garden using a finetune of FunctionGemma 270m.
+list_files (limitado)
 
-* **Model Management & Benchmark**: Gallery is a flexible sandbox for a wide variety of open-source models. Easily download models from the list or load your own custom models. Manage your model library effortlessly and run benchmark tests to understand exactly how each model performs on your specific hardware.
+· Parámetros: path (opcional, carpeta a listar; si está vacío usa la raíz).
+· Comportamiento: Muestra un Toast con la cantidad de archivos encontrados. No devuelve la lista al LLM.
+· Retorno: Siempre true (si el parseo es correcto), pero sin datos útiles para el modelo.
 
-* **100% On-Device Privacy**: All model inferences happen directly on your device hardware. No internet is required, ensuring total privacy for your prompts, images, and sensitive data.
+read_file (limitado)
 
-## 🏁 Get Started in Minutes!
+· Parámetros: path.
+· Comportamiento: Lee el archivo, muestra un Toast con los primeros 200 caracteres. No devuelve el contenido al LLM.
+· Retorno: true si el archivo existe y se pudo leer.
 
-1. **Check OS Requirement**: Android 12 and up, and iOS 17 and up.
-2.  **Download the App:**
-    - Install the app from [Google Play](https://play.google.com/store/apps/details?id=com.google.ai.edge.gallery) or [App Store](https://apps.apple.com/us/app/google-ai-edge-gallery/id6749645337).
-    - For users without Google Play access: install the apk from the [**latest release**](https://github.com/google-ai-edge/gallery/releases/latest/)
-3.  **Install & Explore:** For detailed installation instructions (including for corporate devices) and a full user guide, head over to our [**Project Wiki**](https://github.com/google-ai-edge/gallery/wiki)!
+Cómo usar estas acciones desde una skill (SKILL.md)
 
-## 🛠️ Technology Highlights
+Las acciones se invocan a través de la herramienta run_intent que la app expone al LLM. La skill debe incluir instrucciones claras con el nombre exacto del intent y el esquema JSON de los parámetros.
 
-*   **Google AI Edge:** Core APIs and tools for on-device ML.
-*   **LiteRT:** Lightweight runtime for optimized model execution.
-*   **Hugging Face Integration:** For model discovery and download.
+Ejemplo: escribir un archivo
 
-## ⌨️ Development
+```markdown
+---
+name: guardar-nota
+description: Guarda una nota de texto en la sandbox.
+---
 
-Check out the [development notes](DEVELOPMENT.md) for instructions about how to build the app locally.
+# Guardar nota
 
-## 🤝 Feedback
+## Instructions
 
-This is an **experimental Beta release**, and your input is crucial!
+Call the `run_intent` tool with the following exact parameters:
+- intent: write_file
+- parameters: A JSON string with the following fields:
+  - path: String. Ruta del archivo (ej: "notas/mi_nota.txt").
+  - content: String. Contenido del archivo.
+```
 
-*   🐞 **Found a bug?** [Report it here!](https://github.com/google-ai-edge/gallery/issues/new?assignees=&labels=bug&template=bug_report.md&title=%5BBUG%5D)
-*   💡 **Have an idea?** [Suggest a feature!](https://github.com/google-ai-edge/gallery/issues/new?assignees=&labels=enhancement&template=feature_request.md&title=%5BFEATURE%5D)
+Ejemplo: eliminar un archivo
 
-## 📄 License
+```markdown
+---
+name: borrar-temporal
+description: Elimina un archivo temporal.
+---
 
-Licensed under the Apache License, Version 2.0. See the [LICENSE](LICENSE) file for details.
+# Borrar archivo
 
-## 🔗 Useful Links
+## Instructions
 
-*   [**Project Wiki (Detailed Guides)**](https://github.com/google-ai-edge/gallery/wiki)
-*   [Hugging Face LiteRT Community](https://huggingface.co/litert-community)
-*   [LiteRT-LM](https://github.com/google-ai-edge/LiteRT-LM)
-*   [Google AI Edge Documentation](https://ai.google.dev/edge)
+Call the `run_intent` tool with the following exact parameters:
+- intent: delete_file
+- parameters: A JSON string with the field:
+  - path: String. Ruta del archivo a eliminar.
+```
+
+Ejemplo: crear una carpeta
+
+```markdown
+- intent: create_directory
+- parameters: {"path": "fotos/vacaciones"}
+```
+
+Nota sobre list_files y read_file
+
+El LLM no podrá obtener el listado ni el contenido a través de run_intent. Si tu skill necesita leer archivos para responder, debes implementar una JS skill con webview y usar el puente AndroidFileSystem.
+
+Solución recomendada para lectura/lista de archivos: JS skill + puente nativo
+
+En lugar de usar run_intent, crea una skill JavaScript que retorne un webview (apuntando a assets/webview.html). En ese webview, inyecta un objeto AndroidFileSystem desde el código nativo (modificando el WebView que renderiza la skill). El objeto expone métodos como:
+
+```kotlin
+webView.addJavascriptInterface(object {
+    @JavascriptInterface fun listFiles(path: String): String { ... }
+    @JavascriptInterface fun readFile(path: String): String { ... }
+    // etc.
+}, "AndroidFileSystem")
+```
+
+Desde el HTML puedes llamar a estos métodos y mostrar los resultados en la UI. El LLM no recibe directamente los datos, pero el usuario sí los ve y puede interactuar.
+
+Si necesitas que el LLM procese el contenido de un archivo (por ejemplo, resumir un texto), la skill JS puede leer el archivo y luego enviar su contenido de vuelta al LLM mediante una nueva llamada a la API de chat (simulando una respuesta del usuario). Eso ya es un patrón más avanzado que no está soportado nativamente en la versión actual de la app.
+
+Seguridad
+
+· Todas las rutas son validadas con resolvePath para evitar .. y salir de la sandbox.
+· Los archivos se almacenan en el directorio privado de la app (context.filesDir), inaccesible para otras aplicaciones sin root.
+· No se requieren permisos de almacenamiento externo.
+
+Compilación
+
+Sustituye el archivo IntentHandler.kt original por la versión modificada y compila normalmente en Android Studio. Los cambios son compatibles con el resto de la app.
+
+Prueba rápida (usando ADB)
+
+Puedes verificar que la sandbox funciona correctamente usando ADB:
+
+```bash
+# Escribir un archivo
+adb shell "echo 'Hola mundo' > /data/data/com.google.ai.edge.gallery/files/sandbox/prueba.txt"
+
+# Leerlo (requiere root o depuración)
+adb shell cat /data/data/com.google.ai.edge.gallery/files/sandbox/prueba.txt
+```
+
+Dentro de la app, invoca una skill que use read_file y deberías ver un Toast con el contenido.
+
+---
+
+Fecha de modificación: 2026-04-11
+Autor: Basado en los requerimientos del usuario.
+
+```
