@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"></head>
+<body>
+<script>
+window['ai_edge_gallery_get_result'] = async (data) => {
+    return JSON.stringify({
+        result: "Abriendo administrador de archivos...",
+        webview: {
+            url: "file-manager.html",
+            aspectRatio: 1.5  // altura mayor para ver la lista
+        }
+    });
+};
+</script>
+</body>
+</html>
