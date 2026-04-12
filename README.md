@@ -1,167 +1,146 @@
-
 ---
-# Modificaciones a IntentHandler.kt: Operaciones con archivos en sandbox
----
-## Resumen
+# Modificaciones para gestión de archivos en sandbox (AI Edge Gallery)
+...
 
-Se ha extendido el `IntentHandler` original de la app AI Edge Gallery para soportar operaciones básicas de gestión de archivos dentro de una **carpeta sandbox** segura (`/data/data/.../files/sandbox/`). Las nuevas acciones permiten:
+Este documento resume los cambios implementados para añadir capacidades de gestión de archivos dentro de una carpeta sandbox segura en la aplicación AI Edge Gallery. Las modificaciones permiten a las **Agent Skills** (tanto nativas mediante `run_intent` como visuales con webview) crear, leer, escribir, eliminar y analizar archivos en el almacenamiento privado de la app.
 
-- `write_file` – Crear o sobrescribir un archivo de texto.
-- `delete_file` – Eliminar un archivo.
-- `create_directory` – Crear una o más carpetas.
-- `list_files` – Listar archivos (solo para depuración, **no devuelve datos al LLM**).
-- `read_file` – Leer contenido (solo previsualización en Toast, **no devuelve datos al LLM**).
+## Cambios realizados
 
-> **⚠️ Importante**: Las acciones `list_files` y `read_file` **no pueden devolver el resultado al LLM** a través de `run_intent` debido a limitaciones del diseño actual (los intents solo retornan un booleano de éxito/fracaso). Para obtener listados o contenidos completos y procesarlos con el LLM, se debe utilizar una **JS skill con webview** y el puente `AndroidFileSystem` (descrito al final).
+### 1. Extensión de `IntentHandler.kt` – Acciones nativas para el LLM
 
-## Cambios realizados en IntentHandler.kt
+**Archivo modificado:**  
+`Android/src/app/src/main/java/com/google/ai/edge/gallery/customtasks/agentchat/IntentHandler.kt`
 
-### 1. Nuevo data class
+**Nuevas acciones disponibles para `run_intent`:**
 
-```kotlin
-@JsonClass(generateAdapter = true)
-data class FileOperationParams(
-    val path: String,              // ruta relativa dentro de sandbox/
-    val content: String = "",      // usado en write_file
-    val encoding: String = "utf-8" // reservado
-)
-```
+- `write_file` – Escribe o sobrescribe un archivo de texto.
+- `delete_file` – Elimina un archivo.
+- `create_directory` – Crea una o más carpetas.
+- `list_files` – Muestra un Toast con el número de archivos (solo depuración, no retorna datos al LLM).
+- `read_file` – Muestra un Toast con los primeros 200 caracteres (solo depuración).
 
-2. Funciones auxiliares de seguridad
+**Detalles de implementación:**
 
-```kotlin
-private fun getSandboxRoot(context: Context): File { ... }
-private fun resolvePath(context: Context, relativePath: String): File? { ... }
-```
+- Se añadió el data class `FileOperationParams`.
+- Funciones auxiliares `getSandboxRoot()` y `resolvePath()` para prevenir directory traversal (`../`).
+- La sandbox se ubica en `context.filesDir/sandbox/` (privado de la app, sin permisos especiales).
+- Las acciones `write_file`, `delete_file` y `create_directory` retornan `true/false` y muestran un `Toast` de confirmación.
 
-· resolvePath previene directory traversal (por ejemplo, ../../../etc/passwd). Solo permite rutas que permanezcan dentro de sandbox/.
-
-3. Nuevos bloques en handleAction
-
-write_file
-
-· Parámetros: path (ruta relativa), content (texto a escribir), encoding (opcional).
-· Comportamiento: Crea los directorios padres si no existen, escribe el contenido (sobrescribe si ya existe).
-· Retorno: true si éxito, false en caso contrario. Muestra un Toast de confirmación.
-
-delete_file
-
-· Parámetros: path.
-· Comportamiento: Elimina el archivo si existe y está dentro de la sandbox.
-· Retorno: true si se eliminó correctamente.
-
-create_directory
-
-· Parámetros: path.
-· Comportamiento: Crea el directorio y todos los padres necesarios (mkdirs).
-· Retorno: true si se creó o ya existía.
-
-list_files (limitado)
-
-· Parámetros: path (opcional, carpeta a listar; si está vacío usa la raíz).
-· Comportamiento: Muestra un Toast con la cantidad de archivos encontrados. No devuelve la lista al LLM.
-· Retorno: Siempre true (si el parseo es correcto), pero sin datos útiles para el modelo.
-
-read_file (limitado)
-
-· Parámetros: path.
-· Comportamiento: Lee el archivo, muestra un Toast con los primeros 200 caracteres. No devuelve el contenido al LLM.
-· Retorno: true si el archivo existe y se pudo leer.
-
-Cómo usar estas acciones desde una skill (SKILL.md)
-
-Las acciones se invocan a través de la herramienta run_intent que la app expone al LLM. La skill debe incluir instrucciones claras con el nombre exacto del intent y el esquema JSON de los parámetros.
-
-Ejemplo: escribir un archivo
+**Ejemplo de uso desde una skill (SKILL.md):**
 
 ```markdown
----
-name: guardar-nota
-description: Guarda una nota de texto en la sandbox.
----
-
-# Guardar nota
-
-## Instructions
-
-Call the `run_intent` tool with the following exact parameters:
+Call the `run_intent` tool with:
 - intent: write_file
-- parameters: A JSON string with the following fields:
-  - path: String. Ruta del archivo (ej: "notas/mi_nota.txt").
-  - content: String. Contenido del archivo.
+- parameters: {"path": "notas/mi_nota.txt", "content": "Hola mundo"}
 ```
 
-Ejemplo: eliminar un archivo
+### 2. Inyección del puente nativo en `GalleryWebView.kt` – Para skills visuales (webview)
 
-```markdown
+**Archivo modificado:**  
+`Android/src/app/src/main/java/com/google/ai/edge/gallery/ui/common/GalleryWebView.kt`
+
+**Objeto inyectado en el WebView:** `AndroidFileSystem`
+
+Métodos disponibles desde JavaScript en cualquier `webview.html`:
+
+| Método | Descripción | Retorno |
+|--------|-------------|---------|
+| `listFiles(relativePath)` | Lista archivos en la carpeta especificada (vacío = raíz) | `string` (JSON array) |
+| `readFile(relativePath)` | Lee el contenido de un archivo de texto | `string` |
+| `writeFile(relativePath, content)` | Escribe o sobrescribe un archivo | `void` |
+| `deleteFile(relativePath)` | Elimina un archivo | `void` |
+| `getFileSize(relativePath)` | Tamaño del archivo en bytes | `long` |
+| `getMimeType(relativePath)` | Tipo MIME estimado por extensión | `string` o `null` |
+
+**Seguridad:** El método `resolvePath()` evita que se acceda a rutas fuera de `sandbox/` (ej. `../../../etc/hosts`).
+
+**Ejemplo de uso desde una skill visual (HTML/JS):**
+
+```javascript
+const files = JSON.parse(AndroidFileSystem.listFiles(""));
+const content = AndroidFileSystem.readFile("prueba.txt");
+AndroidFileSystem.writeFile("nuevo.txt", "contenido");
+```
+
+### 3. Skill de ejemplo: `file-manager` (explorador visual)
+
+**Estructura de la skill:**
+
+```
+file-manager-skill/
+├── SKILL.md
+├── scripts/
+│   └── index.html          (runner oculto que retorna el webview)
+└── assets/
+    └── webview.html        (interfaz completa: listar, editar, analizar, eliminar)
+```
+
+**Funcionalidades:**
+
+- Listar archivos y carpetas dentro de `/sandbox/`.
+- Crear/editar archivos de texto.
+- Eliminar archivos.
+- Analizar archivos: tamaño, líneas, palabras, tipo MIME.
+- Interfaz adaptada a móviles.
+
+**Instalación:** Importar la carpeta `file-manager-skill` desde la opción "Import local skill" en la app, o alojarla en un servidor web y cargar desde URL.
+
+## Compilación e instalación
+
+1. **Reemplazar los archivos modificados** en el proyecto clonado:
+   - `IntentHandler.kt`
+   - `GalleryWebView.kt`
+
+2. **Agregar import faltante** en `GalleryWebView.kt` si es necesario:
+   ```kotlin
+   import java.io.IOException
+   ```
+
+3. **Sincronizar y compilar** con Android Studio:
+   - `File → Sync Project with Gradle Files`
+   - `Build → Clean Project`
+   - `Build → Rebuild Project`
+
+4. **Instalar en dispositivo físico** (recomendado) o emulador:
+   - Conectar dispositivo con depuración USB activada.
+   - Hacer clic en el botón verde **Run** (▶️).
+
+5. **Verificar la sandbox** (opcional, mediante ADB):
+   ```bash
+   adb shell
+   run-as com.google.ai.edge.gallery
+   ls files/sandbox
+   cat files/sandbox/ejemplo.txt
+   ```
+
+## Pruebas realizadas
+
+- ✅ Escritura de archivos mediante `run_intent` desde una skill nativa.
+- ✅ Creación de directorios.
+- ✅ Eliminación de archivos.
+- ✅ Skill visual `file-manager` conectada al puente `AndroidFileSystem`:
+  - Listado de archivos.
+  - Lectura y edición.
+  - Análisis de contenido.
+- ✅ Seguridad: rutas con `..` son bloqueadas.
+- ✅ Persistencia tras reinicio de la app.
+
+## Limitaciones conocidas
+
+- Las acciones `list_files` y `read_file` a través de `run_intent` **no retornan datos al LLM** (solo muestran Toasts). Para obtener contenido o listados procesables por el modelo, es necesario usar la skill visual con `AndroidFileSystem`.
+- El puente `AndroidFileSystem` solo está disponible en los webviews creados por `GalleryWebView` (todas las skills visuales). No afecta a otros webviews de la app.
+
+## Contribuciones
+
+Estas modificaciones han sido desarrolladas para extender las capacidades de AI Edge Gallery, permitiendo a los agentes y usuarios gestionar archivos dentro de un entorno controlado y seguro. Si deseas mejorar o añadir más funcionalidades (como soporte para archivos binarios, subida a la nube, etc.), se recomienda seguir el mismo patrón: añadir nuevas acciones en `IntentHandler.kt` para el LLM y/o extender el puente `AndroidFileSystem` en `GalleryWebView.kt`.
+
+## Agradecimientos
+
+- Documentación oficial de AI Edge Gallery Agent Skills.
+- Comunidad de Google AI Edge.
+
 ---
-name: borrar-temporal
-description: Elimina un archivo temporal.
----
 
-# Borrar archivo
-
-## Instructions
-
-Call the `run_intent` tool with the following exact parameters:
-- intent: delete_file
-- parameters: A JSON string with the field:
-  - path: String. Ruta del archivo a eliminar.
-```
-
-Ejemplo: crear una carpeta
-
-```markdown
-- intent: create_directory
-- parameters: {"path": "fotos/vacaciones"}
-```
-
-Nota sobre list_files y read_file
-
-El LLM no podrá obtener el listado ni el contenido a través de run_intent. Si tu skill necesita leer archivos para responder, debes implementar una JS skill con webview y usar el puente AndroidFileSystem.
-
-Solución recomendada para lectura/lista de archivos: JS skill + puente nativo
-
-En lugar de usar run_intent, crea una skill JavaScript que retorne un webview (apuntando a assets/webview.html). En ese webview, inyecta un objeto AndroidFileSystem desde el código nativo (modificando el WebView que renderiza la skill). El objeto expone métodos como:
-
-```kotlin
-webView.addJavascriptInterface(object {
-    @JavascriptInterface fun listFiles(path: String): String { ... }
-    @JavascriptInterface fun readFile(path: String): String { ... }
-    // etc.
-}, "AndroidFileSystem")
-```
-
-Desde el HTML puedes llamar a estos métodos y mostrar los resultados en la UI. El LLM no recibe directamente los datos, pero el usuario sí los ve y puede interactuar.
-
-Si necesitas que el LLM procese el contenido de un archivo (por ejemplo, resumir un texto), la skill JS puede leer el archivo y luego enviar su contenido de vuelta al LLM mediante una nueva llamada a la API de chat (simulando una respuesta del usuario). Eso ya es un patrón más avanzado que no está soportado nativamente en la versión actual de la app.
-
-Seguridad
-
-· Todas las rutas son validadas con resolvePath para evitar .. y salir de la sandbox.
-· Los archivos se almacenan en el directorio privado de la app (context.filesDir), inaccesible para otras aplicaciones sin root.
-· No se requieren permisos de almacenamiento externo.
-
-Compilación
-
-Sustituye el archivo IntentHandler.kt original por la versión modificada y compila normalmente en Android Studio. Los cambios son compatibles con el resto de la app.
-
-Prueba rápida (usando ADB)
-
-Puedes verificar que la sandbox funciona correctamente usando ADB:
-
-```bash
-# Escribir un archivo
-adb shell "echo 'Hola mundo' > /data/data/com.google.ai.edge.gallery/files/sandbox/prueba.txt"
-
-# Leerlo (requiere root o depuración)
-adb shell cat /data/data/com.google.ai.edge.gallery/files/sandbox/prueba.txt
-```
-
-Dentro de la app, invoca una skill que use read_file y deberías ver un Toast con el contenido.
-
----
-
-Fecha de modificación: 2026-04-11
-Autor: Cosio33
+**Fecha de última modificación:** 2026-04-11  
+**Autor:** Cosio33
 ```
