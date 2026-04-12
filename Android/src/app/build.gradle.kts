@@ -37,13 +37,13 @@ android {
     minSdk = 31
     targetSdk = 35
     versionCode = 23
-    versionName = "1.0.11"
+    versionName = "1.0.11vfork"
 
     // Needed for HuggingFace auth workflows.
     // Use the scheme of the "Redirect URLs" in HuggingFace app.
     manifestPlaceholders["appAuthRedirectScheme"] =
         "REPLACE_WITH_YOUR_REDIRECT_SCHEME_IN_HUGGINGFACE_APP"
-    manifestPlaceholders["applicationName"] = "com.google.ai.edge.gallery.GalleryApplication"
+    manifestPlaceholders["applicationName"] = "com.google.ai.edge.gallery.Gallery-Sandbox"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
