@@ -1,6 +1,6 @@
 ---
 # Modificaciones para gestión de archivos en sandbox (AI Edge Gallery)
-...
+---
 
 Este documento resume los cambios implementados para añadir capacidades de gestión de archivos dentro de una carpeta sandbox segura en la aplicación AI Edge Gallery. Las modificaciones permiten a las **Agent Skills** (tanto nativas mediante `run_intent` como visuales con webview) crear, leer, escribir, eliminar y analizar archivos en el almacenamiento privado de la app.
 
@@ -43,7 +43,14 @@ Call the `run_intent` tool with:
 
 Métodos disponibles desde JavaScript en cualquier `webview.html`:
 
-
+Método	Descripción	Retorno
+listFiles(relativePath)	Lista archivos en la carpeta especificada (vacío = raíz)	string (JSON array)
+readFile(relativePath)	Lee el contenido de un archivo de texto	string
+writeFile(relativePath, content)	Escribe o sobrescribe un archivo	void
+deleteFile(relativePath)	Elimina un archivo	void
+getFileSize(relativePath)	Tamaño del archivo en bytes	long
+getMimeType(relativePath)	Tipo MIME estimado por extensión	string o null
+Seguridad: El método resolvePath() evita que se acceda a rutas fuera de sandbox/ (ej. ../../../etc/hosts).
 
 **Ejemplo de uso desde una skill visual (HTML/JS):**
 
