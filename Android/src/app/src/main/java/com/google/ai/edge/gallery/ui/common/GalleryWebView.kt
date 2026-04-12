@@ -21,6 +21,7 @@ import android.content.Context
 import android.util.Log
 import android.view.ViewGroup
 import android.webkit.ConsoleMessage
+import android.webkit.JavascriptInterface
 import android.webkit.PermissionRequest
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
@@ -39,7 +40,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.webkit.WebViewAssetLoader
 import com.google.ai.edge.gallery.common.LOCAL_URL_BASE
+import java.io.IOException
 import java.io.File
+import java.net.URLConnection
 
 private const val TAG = "AGGalleryWebView"
 private val iframeWrapper =
@@ -114,7 +117,7 @@ fun GalleryWebView(
 
   val cameraPermissionLauncher =
     rememberLauncherForActivityResult(contract = ActivityResultContracts.RequestPermission()) {
-      isGranted: Boolean ->
+        isGranted: Boolean ->
       pendingCameraPermissionRequest?.let { request ->
         if (isGranted) {
           request.grant(arrayOf(PermissionRequest.RESOURCE_VIDEO_CAPTURE))
@@ -129,7 +132,7 @@ fun GalleryWebView(
 
   val audioPermissionLauncher =
     rememberLauncherForActivityResult(contract = ActivityResultContracts.RequestPermission()) {
-      isGranted: Boolean ->
+        isGranted: Boolean ->
       pendingAudioPermissionRequest?.let { request ->
         if (isGranted) {
           request.grant(arrayOf(PermissionRequest.RESOURCE_AUDIO_CAPTURE))
@@ -156,6 +159,82 @@ fun GalleryWebView(
           allowFileAccess = true
           mediaPlaybackRequiresUserGesture = false
         }
+
+        // ============================================================
+        // INYECCIÓN DEL PUENTE NATIVO PARA ACCESO A LA SANDBOX
+        // ============================================================
+        addJavascriptInterface(
+          object {
+            // Obtiene la raíz de la sandbox (crea el directorio si no existe)
+            private fun getSandboxRoot(): File {
+              val sandbox = File(ctx.filesDir, "sandbox")
+              if (!sandbox.exists()) sandbox.mkdirs()
+              return sandbox
+            }
+
+            // Resuelve una ruta relativa a un File absoluto dentro de la sandbox
+            // Previene directory traversal (../)
+            private fun resolvePath(relativePath: String): File? {
+              val sandboxRoot = getSandboxRoot()
+              val canonicalSandbox = sandboxRoot.canonicalFile
+              val target = File(sandboxRoot, relativePath).canonicalFile
+              return if (target.path.startsWith(canonicalSandbox.path)) target else null
+            }
+
+            @JavascriptInterface
+            fun listFiles(relativePath: String): String {
+              return try {
+                val targetDir = resolvePath(relativePath) ?: getSandboxRoot()
+                val files = targetDir.listFiles()?.map { it.name } ?: emptyList()
+                com.google.gson.Gson().toJson(files)
+              } catch (e: Exception) {
+                Log.e(TAG, "Error listing files", e)
+                "[]"
+              }
+            }
+
+            @JavascriptInterface
+            fun readFile(relativePath: String): String {
+              val targetFile = resolvePath(relativePath)
+                ?: throw IllegalArgumentException("Invalid path: $relativePath")
+              if (!targetFile.exists() || targetFile.isDirectory) {
+                throw IllegalArgumentException("File not found or is directory: $relativePath")
+              }
+              return targetFile.readText()
+            }
+
+            @JavascriptInterface
+            fun writeFile(relativePath: String, content: String) {
+              val targetFile = resolvePath(relativePath)
+                ?: throw IllegalArgumentException("Invalid path: $relativePath")
+              targetFile.parentFile?.mkdirs()
+              targetFile.writeText(content)
+            }
+
+            @JavascriptInterface
+            fun deleteFile(relativePath: String) {
+              val targetFile = resolvePath(relativePath)
+                ?: throw IllegalArgumentException("Invalid path: $relativePath")
+              if (targetFile.exists() && !targetFile.delete()) {
+                throw IOException("Failed to delete file: $relativePath")
+              }
+            }
+
+            @JavascriptInterface
+            fun getFileSize(relativePath: String): Long {
+              val targetFile = resolvePath(relativePath)
+                ?: throw IllegalArgumentException("Invalid path: $relativePath")
+              return targetFile.length()
+            }
+
+            @JavascriptInterface
+            fun getMimeType(relativePath: String): String? {
+              return URLConnection.guessContentTypeFromName(relativePath)
+            }
+          },
+          "AndroidFileSystem"
+        )
+        // ============================================================
 
         if (preventParentScrolling) {
           setOnTouchListener { v, event ->
@@ -206,7 +285,7 @@ fun GalleryWebView(
                     resources
                       .filter {
                         it != PermissionRequest.RESOURCE_VIDEO_CAPTURE &&
-                          it != PermissionRequest.RESOURCE_AUDIO_CAPTURE
+                                it != PermissionRequest.RESOURCE_AUDIO_CAPTURE
                       }
                       .toTypedArray()
                   if (otherResources.isNotEmpty()) {
