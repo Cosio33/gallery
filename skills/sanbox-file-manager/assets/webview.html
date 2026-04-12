@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Explorador Sandbox</title>
+    <style>
+        body { font-family: system-ui; margin: 1rem; background: #f5f5f5; }
+        .container { max-width: 600px; margin: auto; background: white; border-radius: 1rem; padding: 1rem; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+        button { background: #0a9396; color: white; border: none; padding: 8px 12px; border-radius: 8px; margin: 4px; cursor: pointer; }
+        input, textarea { width: 100%; margin: 8px 0; padding: 8px; border: 1px solid #ccc; border-radius: 8px; box-sizing: border-box; }
+        .file-list { list-style: none; padding: 0; }
+        .file-list li { background: #f0f0f0; margin: 8px 0; padding: 10px; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; }
+        .actions button { margin-left: 5px; background: #e9ecef; color: #333; }
+        .delete { background: #e63946; color: white; }
+        .info { font-size: 0.8rem; color: #555; }
+        hr { margin: 1rem 0; }
+        .status { background: #e9ecef; padding: 8px; border-radius: 8px; margin-bottom: 1rem; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h2>📁 Sandbox Manager</h2>
+    <div class="status" id="status">Cargando...</div>
+    
+    <h3>Archivos en /sandbox/</h3>
+    <ul id="fileList" class="file-list"></ul>
+    
+    <hr>
+    <h3>📝 Editor / Creador</h3>
+    <input type="text" id="fileName" placeholder="nombre.txt" />
+    <textarea id="fileContent" rows="6" placeholder="Contenido del archivo..."></textarea>
+    <button id="saveBtn">💾 Guardar / Crear</button>
+    <button id="refreshBtn">🔄 Refrescar lista</button>
+    
+    <hr>
+    <h3>📊 Analizar archivo</h3>
+    <input type="text" id="analyzePath" placeholder="ruta del archivo (ej: notas.txt)" />
+    <button id="analyzeBtn">🔍 Analizar</button>
+    <pre id="analysisResult" style="background:#f0f0f0; padding:8px; border-radius:8px;"></pre>
+</div>
+
+<script>
+    // Verificar si el puente nativo existe
+    const native = window.AndroidFileSystem;
+    if (!native) {
+        document.getElementById('status').innerHTML = '❌ Error: Puente nativo no disponible. La app necesita inyectar AndroidFileSystem.';
+    } else {
+        document.getElementById('status').innerHTML = '✅ Conectado a la sandbox de Android.';
+        refreshFileList();
+    }
+
+    async function refreshFileList() {
+        if (!native) return;
+        try {
+            const filesJson = native.listFiles("");
+            const files = JSON.parse(filesJson);
+            const listEl = document.getElementById('fileList');
+            listEl.innerHTML = '';
+            for (const file of files) {
+                const li = document.createElement('li');
+                li.innerHTML = `
+                    <span>📄 ${file}</span>
+                    <span class="actions">
+                        <button onclick="editFile('${file}')">✏️ Editar</button>
+                        <button class="delete" onclick="deleteFile('${file}')">🗑️ Eliminar</button>
+                    </span>
+                `;
+                listEl.appendChild(li);
+            }
+        } catch(e) {
+            showStatus('Error al listar: ' + e.message);
+        }
+    }
+
+    window.editFile = async function(filename) {
+        try {
+            const content = native.readFile(filename);
+            document.getElementById('fileName').value = filename;
+            document.getElementById('fileContent').value = content;
+            showStatus(`Editando: ${filename}`);
+        } catch(e) {
+            showStatus('Error al leer: ' + e.message);
+        }
+    };
+
+    window.deleteFile = async function(filename) {
+        if (confirm(`¿Eliminar ${filename} permanentemente?`)) {
+            try {
+                native.deleteFile(filename);
+                showStatus(`✅ Eliminado: ${filename}`);
+                refreshFileList();
+            } catch(e) {
+                showStatus('Error al eliminar: ' + e.message);
+            }
+        }
+    };
+
+    document.getElementById('saveBtn').onclick = function() {
+        const name = document.getElementById('fileName').value.trim();
+        const content = document.getElementById('fileContent').value;
+        if (!name) {
+            showStatus('Ingresa un nombre de archivo');
+            return;
+        }
+        try {
+            native.writeFile(name, content);
+            showStatus(`✅ Guardado: ${name}`);
+            refreshFileList();
+        } catch(e) {
+            showStatus('Error al guardar: ' + e.message);
+        }
+    };
+
+    document.getElementById('refreshBtn').onclick = function() {
+        refreshFileList();
+    };
+
+    document.getElementById('analyzeBtn').onclick = function() {
+        const path = document.getElementById('analyzePath').value.trim();
+        if (!path) {
+            showStatus('Ingresa una ruta para analizar');
+            return;
+        }
+        try {
+            const content = native.readFile(path);
+            const lines = content.split(/\r?\n/);
+            const sizeBytes = native.getFileSize(path);
+            const stats = {
+                nombre: path,
+                tamaño: `${sizeBytes} bytes (${(sizeBytes/1024).toFixed(2)} KB)`,
+                líneas: lines.length,
+                caracteres: content.length,
+                palabras: content.split(/\s+/).filter(w=>w.length>0).length,
+                tipoMIME: native.getMimeType(path) || 'text/plain'
+            };
+            document.getElementById('analysisResult').innerText = JSON.stringify(stats, null, 2);
+            showStatus(`Análisis completado para ${path}`);
+        } catch(e) {
+            document.getElementById('analysisResult').innerText = `Error: ${e.message}`;
+            showStatus('Error al analizar');
+        }
+    };
+
+    function showStatus(msg) {
+        const statusDiv = document.getElementById('status');
+        statusDiv.innerHTML = msg;
+        setTimeout(() => {
+            if (statusDiv.innerHTML === msg) statusDiv.innerHTML = '✅ Listo';
+        }, 3000);
+    }
+</script>
+</body>
+</html>
